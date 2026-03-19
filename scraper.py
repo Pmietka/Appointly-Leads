@@ -97,6 +97,13 @@ async def scrape_listing(page: Page, url: str) -> Lead:
 
         # ── Rating (aria-hidden span shows "4.5" etc.) ──
         rating_text = await _safe_text(page, "div.F7nice span[aria-hidden='true']")
+        if not rating_text:
+            rating_text = await _safe_text(page, "span.ceNzKf span[aria-hidden='true']")
+        if not rating_text:
+            # Fallback: parse from aria-label like "4.5 stars"
+            stars_label = await _safe_attr(page, '[aria-label*="stars"]', "aria-label")
+            if stars_label:
+                rating_text = stars_label
         if rating_text:
             m = re.search(r"[\d.]+", rating_text)
             if m:
@@ -106,6 +113,9 @@ async def scrape_listing(page: Page, url: str) -> Lead:
         reviews_text = await _safe_text(page, "div.F7nice span[aria-label]")
         if not reviews_text:
             reviews_text = await _safe_attr(page, "div.F7nice span[aria-label]", "aria-label")
+        if not reviews_text:
+            # Fallback: aria-label with "reviews" keyword
+            reviews_text = await _safe_attr(page, '[aria-label*="reviews"]', "aria-label")
         if reviews_text:
             m = re.search(r"([\d,]+)", reviews_text)
             if m:
@@ -113,49 +123,73 @@ async def scrape_listing(page: Page, url: str) -> Lead:
 
         # ── Category ──
         lead.category = await _safe_text(page, "button[jsaction*='category']")
+        if not lead.category:
+            lead.category = await _safe_text(page, "span.DkEaL")
 
         # ── Address ──
-        # data-item-id="address" is on the button wrapping the address
+        # Primary: data-item-id="address"
         addr = await _safe_text(
             page,
             'button[data-item-id="address"] div.fontBodyMedium',
         )
         if not addr:
-            # Fallback: aria-label on the button itself
+            # Fallback 1: aria-label on the data-item-id button
             addr = await _safe_attr(page, 'button[data-item-id="address"]', "aria-label")
             if addr:
                 addr = addr.replace("Address: ", "")
+        if not addr:
+            # Fallback 2: aria-label pattern matching (most resilient)
+            addr = await _safe_attr(page, '[aria-label*="Address"]', "aria-label")
+            if addr:
+                addr = re.sub(r"^Address:\s*", "", addr)
         lead.address = addr
 
         # ── Phone ──
-        # data-item-id starts with "phone:tel:" for the phone button
+        # Primary: data-item-id starts with "phone:tel:"
         phone = await _safe_text(
             page,
             'button[data-item-id^="phone:tel:"] div.fontBodyMedium',
         )
         if not phone:
+            # Fallback 1: aria-label on the data-item-id button
             phone = await _safe_attr(
                 page, 'button[data-item-id^="phone:tel:"]', "aria-label"
             )
             if phone:
                 phone = phone.replace("Phone: ", "")
+        if not phone:
+            # Fallback 2: aria-label pattern matching
+            phone = await _safe_attr(page, '[aria-label*="Phone"]', "aria-label")
+            if phone:
+                phone = re.sub(r"^Phone:\s*", "", phone)
         lead.phone = phone
 
         # ── Website ──
+        # Primary: data-item-id="authority" href
         href = await _safe_attr(page, 'a[data-item-id="authority"]', "href")
         if not href:
-            # Fallback: text inside the website button
+            # Fallback 1: text inside the website element
             href = await _safe_text(
                 page, 'a[data-item-id="authority"] div.fontBodyMedium'
             )
+        if not href:
+            # Fallback 2: aria-label pattern matching
+            web_label = await _safe_attr(page, '[aria-label*="Website"]', "aria-label")
+            if web_label:
+                href = re.sub(r"^Website:\s*", "", web_label)
         lead.website = href
 
         # ── Hours ──
-        # data-item-id contains "oh" for opening hours
+        # Primary: data-item-id "oh" = opening hours
         hours = await _safe_text(
             page,
             'button[data-item-id^="oh"] div.fontBodyMedium',
         )
+        if not hours:
+            # Fallback: aria-label pattern
+            hours = await _safe_attr(page, '[aria-label*="Hours"]', "aria-label")
+            if hours:
+                hours = re.sub(r"^Hours:\s*", "", hours)
         # Clean up unicode characters that sometimes appear
         lead.hours = hours.replace("\u202f", " ").replace("\u2009", " ")
 
